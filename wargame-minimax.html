@@ -1,0 +1,801 @@
+<style>
+
+body {
+  background-color: #333;
+}
+
+canvas {
+  width: 800px;
+  height: 800px;
+  background-color: #222;
+  border: 3px black solid;
+}
+
+canvas.win {
+  border: 3px green solid;
+}
+
+canvas.lose {
+  border: 3px red solid;
+}
+
+canvas.draw {
+  opacity: 0.5;
+}
+
+</style>
+<canvas></canvas>
+<script>
+
+// ------------------------------------------------------------
+// Configuration
+// ------------------------------------------------------------
+
+const SCREEN_WIDTH = 800;
+const SCREEN_HEIGHT = 800;
+
+// - empty tile
+// O obstacle tile
+// H health tile
+// X hazard tile
+const MAP = [
+  '---------',
+  '---------',
+  '---------',
+  '----O----',
+  '--H-OXXXX',
+  '----O----',
+  '---------',
+  '--H------',
+  '---------',
+];
+
+const MAP_WIDTH = 9;
+const MAP_HEIGHT = 9;
+
+const HEALTH_TILE_AMOUNT = 20;
+const HAZARD_TILE_AMOUNT = 20;
+
+const MAX_HEALTH = 100;
+
+const AI_DEPTH = 4;
+
+const PLAYERS = {
+  player: {
+    startingPosition: { x: 0, y: 0 },
+    startingDirection: { x: 1, y: 0 },
+    startingHealth: MAX_HEALTH,
+    moveRange: 3,
+    shootRange: 4,
+    shootDamage: 40,
+  },
+  computer: {
+    startingPosition: { x: 8, y: 8 },
+    startingDirection: { x: -1, y: 0 },
+    startingHealth: MAX_HEALTH,
+    moveRange: 3,
+    shootRange: 4,
+    shootDamage: 40,
+  }
+};
+
+// ------------------------------------------------------------
+// Game
+// ------------------------------------------------------------
+
+let TURN = 'player';
+let STATE = initialise();
+let GAME_OVER = false;
+
+const canvas = document.querySelector('canvas');
+const context = canvas.getContext('2d');
+
+canvas.width = SCREEN_WIDTH;
+canvas.height = SCREEN_HEIGHT;
+
+// Clicking on the canvas moves the player
+canvas.addEventListener('click', e => {
+  if (GAME_OVER) {
+    return;
+  }
+
+  if (TURN === 'computer') {
+    return;
+  }
+
+  const position = {
+    x: Math.floor(e.offsetX / SCREEN_WIDTH * MAP_WIDTH),
+    y: Math.floor(e.offsetY / SCREEN_HEIGHT * MAP_HEIGHT),
+  };
+
+  STATE = move(STATE, 'player', position, null);
+  TURN = 'computer';
+  render(STATE);
+
+  const [, computerMove] = minimax(
+    STATE,
+    AI_DEPTH,
+    -Infinity,
+    Infinity,
+    'computer'
+  );
+
+  setTimeout(() => {
+    STATE = move(
+      STATE,
+      'computer',
+      computerMove.position,
+      computerMove.direction
+    );
+    TURN = 'player';
+    render(STATE);
+  }, 500);
+});
+
+// Pressing WASD keys changes the player direction
+window.addEventListener('keydown', e => {
+  if (GAME_OVER) {
+    return;
+  }
+
+  if (TURN === 'computer') {
+    return;
+  }
+
+  let direction = { x: 0, y: 0 };
+  switch (e.code) {
+    case 'KeyW':
+      direction = { x: 0, y: -1 };
+      break;
+
+    case 'KeyS':
+      direction = { x: 0, y: 1 };
+      break;
+    
+    case 'KeyA':
+      direction = { x: -1, y: 0 };
+      break;
+    
+    case 'KeyD':
+      direction = { x: 1, y: 0 };
+      break;
+
+    default: return;
+  }
+
+  STATE = move(STATE, 'player', null, direction);
+  TURN = 'computer';
+  render(STATE);
+
+  const [, computerMove] = minimax(
+    STATE,
+    AI_DEPTH,
+    -Infinity,
+    Infinity,
+    'computer'
+  );
+
+  setTimeout(() => {
+    STATE = move(
+      STATE,
+      'computer',
+      computerMove.position,
+      computerMove.direction
+    );
+    TURN = 'player';
+    render(STATE);
+  }, 500);
+});
+
+// Return an initial state
+function initialise() {
+  return {
+    player: {
+      position: {
+        ...PLAYERS.player.startingPosition,
+      },
+      direction: {
+        ...PLAYERS.player.startingDirection,
+      },
+      health: PLAYERS.player.startingHealth,
+    },
+    computer: {
+      position: {
+        ...PLAYERS.computer.startingPosition,
+      },
+      direction: {
+        ...PLAYERS.computer.startingDirection,
+      },
+      health: PLAYERS.computer.startingHealth,
+    },
+    lastShot: null,
+  };
+}
+
+// Check if a state is a win/lose/draw
+// Returns null if neither player has won
+function checkWin(state) {
+  if (
+    state.player.health <= 0 &&
+    state.computer.health <= 0
+  ) {
+    return 'draw';
+  }
+
+  if (state.player.health <= 0) {
+    return 'computer';
+  }
+
+  if (state.computer.health <= 0) {
+    return 'player';
+  }
+
+  return null;
+}
+
+// Render the given state in the canvas
+function render(state) {
+  context.clearRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+
+  const cellWidth = SCREEN_WIDTH / MAP_WIDTH;
+  const cellHeight = SCREEN_HEIGHT / MAP_HEIGHT;
+
+  context.font = '20px sans-serif';
+  context.fillStyle = 'white';
+  context.fillText(`Turn: ${TURN}`, 10, SCREEN_HEIGHT - 10);
+
+  // Draw grid
+  context.save();
+  context.strokeStyle = '#fff2';
+  context.lineWidth = 1;
+  context.setLineDash([1, 1]);
+  context.beginPath();
+  for (let y = 0; y < MAP_HEIGHT; y++) {
+    context.moveTo(0, y * cellHeight);
+    context.lineTo(SCREEN_WIDTH, y * cellHeight);
+  }
+  for (let x = 0; x < MAP_WIDTH; x++) {
+    context.moveTo(x * cellWidth, 0);
+    context.lineTo(x * cellWidth, SCREEN_HEIGHT);
+  }
+  context.stroke();
+  context.restore();
+
+  // Draw map
+  context.save();
+  for (let y = 0; y < MAP_HEIGHT; y++) {
+    for (let x = 0; x < MAP_WIDTH; x++) {
+      switch (MAP[y][x]) {
+        case '-':
+          break;
+
+        case 'O':
+          context.fillStyle = '#555';
+          context.fillRect(
+            x * cellWidth,
+            y * cellHeight,
+            cellWidth,
+            cellHeight
+          );
+          break;
+
+        case 'H':
+          context.fillStyle = '#0f07';
+          context.textAlign = 'center';
+          context.textBaseline = 'middle';
+          context.font = `${Math.floor(cellHeight * 0.5)}px sans-serif`;
+          context.fillText(
+            'H',
+            x * cellWidth + cellWidth / 2,
+            y * cellHeight + cellHeight / 2
+          );
+          break;
+
+        case 'X':
+          context.fillStyle = '#f007';
+          context.textAlign = 'center';
+          context.textBaseline = 'middle';
+          context.font = `${Math.floor(cellHeight * 0.5)}px sans-serif`;
+          context.fillText(
+            'X',
+            x * cellWidth + cellWidth / 2,
+            y * cellHeight + cellHeight / 2
+          );
+          break;
+      }
+    }
+  }
+  context.restore();
+
+  // Draw player
+  context.save();
+  context.beginPath();
+  if (state.player.health <= 0) {
+    context.arc(
+      state.player.position.x * cellWidth + cellWidth / 2,
+      state.player.position.y * cellHeight + cellHeight / 2,
+      Math.max(cellWidth, cellHeight) * 0.7,
+      0,
+      Math.PI * 2
+    );
+    context.fillStyle = '#0f04';
+  } else {
+    context.arc(
+      state.player.position.x * cellWidth + cellWidth / 2,
+      state.player.position.y * cellHeight + cellHeight / 2,
+      Math.max(cellWidth, cellHeight) * 0.2,
+      0,
+      Math.PI * 2
+    );
+    context.fillStyle = '#0f0';
+  }
+  context.fill();
+  context.restore();
+
+  // Draw player health, move and shoot range
+  if (state.player.health > 0) {
+    context.save();
+    context.fillStyle = '#0f0';
+    context.font = '20px sans-serif';
+    context.textAlign = 'center';
+    context.fillText(
+      state.player.health.toString(),
+      state.player.position.x * cellWidth + cellWidth / 2,
+      state.player.position.y * cellHeight + 20
+    );
+    context.fillStyle = '#0f01';
+    const availableMovePositions = getAvailableMovePositions(state, 'player');
+    for (const movePosition of availableMovePositions) {
+      context.fillRect(
+        movePosition.x * cellWidth,
+        movePosition.y * cellHeight,
+        cellWidth,
+        cellHeight
+      );
+    }
+    context.fillStyle = '#ff01';
+    const availableShootPositions = getAvailableShootPositions(state, 'player');
+    for (const shootPosition of availableShootPositions) {
+      context.fillRect(
+        shootPosition.x * cellWidth,
+        shootPosition.y * cellHeight,
+        cellWidth,
+        cellHeight
+      );
+    }
+    context.restore();
+  }
+
+  // Draw computer
+  context.save();
+  context.beginPath();
+  if (state.computer.health <= 0) {
+    context.arc(
+      state.computer.position.x * cellWidth + cellWidth / 2,
+      state.computer.position.y * cellHeight + cellHeight / 2,
+      Math.max(cellWidth, cellHeight) * 0.7,
+      0,
+      Math.PI * 2
+    );
+    context.fillStyle = '#f003';
+  } else {
+    context.arc(
+      state.computer.position.x * cellWidth + cellWidth / 2,
+      state.computer.position.y * cellHeight + cellHeight / 2,
+      Math.max(cellWidth, cellHeight) * 0.2,
+      0,
+      Math.PI * 2
+    );
+    context.fillStyle = '#f00';
+  }
+  context.fill();
+  context.restore();
+
+  // Draw computer move and shoot range
+  if (state.computer.health > 0) {
+    context.save();
+    context.fillStyle = '#f00';
+    context.font = '20px sans-serif';
+    context.textAlign = 'center';
+    context.fillText(
+      state.computer.health.toString(),
+      state.computer.position.x * cellWidth + cellWidth / 2,
+      state.computer.position.y * cellHeight + 20
+    );
+    context.fillStyle = '#f001';
+    const availableMovePositions = getAvailableMovePositions(state, 'computer');
+    for (const movePosition of availableMovePositions) {
+      context.fillRect(
+        movePosition.x * cellWidth,
+        movePosition.y * cellHeight,
+        cellWidth,
+        cellHeight
+      );
+    }
+    context.fillStyle = '#ff01';
+    const availableShootPositions = getAvailableShootPositions(state, 'computer');
+    for (const shootPosition of availableShootPositions) {
+      context.fillRect(
+        shootPosition.x * cellWidth,
+        shootPosition.y * cellHeight,
+        cellWidth,
+        cellHeight
+      );
+    }
+    context.restore();
+  }
+
+  // Draw last shot
+  if (state.lastShot) {
+    context.save();
+    context.strokeStyle = '#ff0';
+    context.lineWidth = 5;
+    context.beginPath();
+    context.moveTo(
+      state.lastShot.start.x * cellWidth + cellWidth / 2,
+      state.lastShot.start.y * cellHeight + cellHeight / 2
+    );
+    context.lineTo(
+      state.lastShot.end.x * cellWidth + cellWidth / 2,
+      state.lastShot.end.y * cellHeight + cellHeight / 2
+    );
+    context.stroke();
+    context.restore();
+  }
+
+  const win = checkWin(state);
+  switch (win) {
+    case null:
+      canvas.className = '';
+      GAME_OVER = false;
+      break;
+
+    case 'draw':
+      canvas.className = 'draw';
+      GAME_OVER = true;
+      break;
+
+    case 'player':
+      canvas.className = 'win';
+      GAME_OVER = true;
+      break;
+
+    case 'computer':
+      canvas.className = 'lose';
+      GAME_OVER = true;
+      break;
+
+    default: break;
+  }
+}
+render(STATE);
+
+// Make a move for a player
+function move(state, playerId, position, direction) {
+  const newState = {
+    player: {
+      position: {
+        ...state.player.position,
+      },
+      direction: {
+        ...state.player.direction,
+      },
+      health: state.player.health,
+    },
+    computer: {
+      position: {
+        ...state.computer.position,
+      },
+      direction: {
+        ...state.computer.direction,
+      },
+      health: state.computer.health,
+    },
+    lastShot: null,
+  };
+
+  // Maybe update position
+  if (position) {
+    const availableMovePositions = this.getAvailableMovePositions(
+      newState,
+      playerId
+    );
+    if (availableMovePositions.find(
+      p => p.x === position.x && p.y === position.y
+    )) {
+      newState[playerId].position = position;
+    }
+  }
+
+  // Maybe update direction
+  if (direction) {
+    newState[playerId].direction = direction;
+  }
+
+  // Check hazard tiles
+  if (MAP[newState[playerId].position.y][newState[playerId].position.x] === 'X') {
+    newState[playerId].health -= HAZARD_TILE_AMOUNT;
+  }
+
+  // Check health tiles
+  if (MAP[newState[playerId].position.y][newState[playerId].position.x] === 'H') {
+    newState[playerId].health += HEALTH_TILE_AMOUNT;
+  }
+
+  // Autoshoot if in range
+  const opponentId = {
+    player: 'computer',
+    computer: 'player',
+  }[playerId];
+  const availableShootPositions = this.getAvailableShootPositions(
+    newState,
+    playerId
+  );
+  if (availableShootPositions.find(
+    p => (
+      p.x === newState[opponentId].position.x &&
+      p.y === newState[opponentId].position.y
+    )
+  )) {
+    newState[opponentId].health -= PLAYERS[playerId].shootDamage;
+    newState.lastShot = {
+      start: newState[playerId].position,
+      end: newState[opponentId].position,
+    };
+  }
+
+  // Clamp health
+  newState[playerId].health = clamp(newState[playerId].health, 0, MAX_HEALTH);
+
+  // Check if the game has been won/lost/drawn
+  checkWin(newState);
+
+  return newState;
+}
+
+// Get manhattan distance between positions a and b
+function manhattanDistance(a, b) {
+  return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+}
+
+// Get the closest cardinal direction from a to b
+function directionTo(a, b) {
+  const d = { x: a.x - b.x, y: a.y - b.y };
+  if (Math.abs(d.x) >= Math.abs(d.y)) {
+    return d.x >= 0
+      ? { x: -1, y: 0 }
+      : { x: 1, y: 0 };
+  } else {
+    return d.y >= 0
+      ? { x: 0, y: -1 }
+      : { x: 0, y: 1 };
+  }
+}
+
+// Clamp a value between min and max
+function clamp(a, min = 0, max = 1) {
+  return a < min ? min : (a > max ? max : a);
+}
+
+// Get a list of tile positions that a player can move to
+function getAvailableMovePositions(state, playerId) {
+  const positions = {};
+  const floodFill = (p, depth) => {
+    if (depth > PLAYERS[playerId].moveRange) {
+      return null;
+    }
+
+    if (
+      p.x < 0 ||
+      p.x >= MAP_WIDTH ||
+      p.y < 0 ||
+      p.y >= MAP_HEIGHT
+    ) {
+      return null;
+    }
+
+    if (MAP[p.y][p.x] === 'O') {
+      return null;
+    }
+
+    positions[`${p.x}_${p.y}`] = p;
+
+    floodFill({ x: p.x, y: p.y + 1 }, depth + 1);
+    floodFill({ x: p.x, y: p.y - 1 }, depth + 1);
+    floodFill({ x: p.x + 1, y: p.y }, depth + 1);
+    floodFill({ x: p.x - 1, y: p.y }, depth + 1);
+  };
+  floodFill(state[playerId].position, 0);
+
+  const opponentId = {
+    player: 'computer',
+    computer: 'player',
+  }[playerId];
+
+  return Object
+    .values(positions)
+    .filter(p => !(
+      p.x === state[opponentId].position.x &&
+      p.y === state[opponentId].position.y
+    ));
+}
+
+// Get a list of tile positions that a player can shoot at 
+function getAvailableShootPositions(state, playerId) {
+  const positions = [];
+  const directionalFill = (p, direction, depth) => {
+    if (depth > PLAYERS[playerId].shootRange) {
+      return null;
+    }
+
+    if (
+      p.x < 0 ||
+      p.x >= MAP_WIDTH ||
+      p.y < 0 ||
+      p.y >= MAP_HEIGHT
+    ) {
+      return null;
+    }
+
+    if (MAP[p.y][p.x] === 'O') {
+      return null;
+    }
+
+    positions.push(p);
+
+    directionalFill(
+      { x: p.x + direction.x, y: p.y + direction.y },
+      direction,
+      depth + 1
+    );
+  };
+  directionalFill(state[playerId].position, state[playerId].direction, 0);
+
+  return positions;
+}
+
+// ------------------------------------------------------------
+// Opponent AI
+// ------------------------------------------------------------
+
+// Evaluate a given state and return a heuristic score
+// The score will be positive if the state is good for the player
+// The score will be negative if the state is good for the computer
+function evaluateState(state) {
+  if (
+    state.player.health <= 0 &&
+    state.computer.health <= 0
+  ) {
+    return 0;
+  }
+
+  if (state.player.health <= 0) {
+    return -10000;
+  }
+
+  if (state.computer.health <= 0) {
+    return 10000;
+  }
+
+  const healthDifference = state.player.health - state.computer.health;
+  const playerHealth = state.player.health;
+  const computerInverseHealth = MAX_HEALTH - state.computer.health;
+
+  const distanceToPlayer = manhattanDistance(
+    state.player.position,
+    state.computer.position
+  );
+  const distanceScore = distanceToPlayer;
+  
+  const directionToPlayer = directionTo(
+    state.player.position,
+    state.computer.position
+  );
+  const directionScore = +(
+    directionToPlayer.x === state.computer.direction.x &&
+    directionToPlayer.y === state.computer.direction.y
+  );
+
+  return (
+    80 * healthDifference +
+    20 * playerHealth +
+    20 * computerInverseHealth +
+    10 * distanceToPlayer +
+    20 * directionScore
+  );
+}
+
+// Get an array of next possible moves for the given player and state
+function nextMoves(state, playerId) {
+  const availableMovePositions = this.getAvailableMovePositions(
+    state,
+    playerId
+  );
+
+  return [
+    ...availableMovePositions.map(p => ({
+      position: p,
+      direction: null,
+    })),
+    ...[
+      { x: 1, y: 0 },
+      { x: -1, y: 0 },
+      { x: 0, y: 1 },
+      { x: 0, y: -1 },
+    ].map(d => ({
+      position: null,
+      direction: d,
+    })),
+  ];
+}
+
+// Apply a move to a state and return the mutated state
+function applyMove(state, playerId, m) {
+  return move(state, playerId, m.position, m.direction);
+}
+
+// Run minimax from the given state to the end of the game
+// Returns a tuple containing:
+// - the best move's score
+// - a position that the maximising player should play
+function minimax(state, depth, alpha, beta, maximisingPlayerId) {
+  // Check if we've reached a terminal state or the maximum depth
+  const win = checkWin(state);
+  if (depth === 0 || win !== null) {
+    return [evaluateState(state), null];
+  }
+
+  let bestMove = null;
+
+  if (maximisingPlayerId === 'player') {
+    let maxScore = -Infinity;
+
+    const t = nextMoves(state, 'player');
+
+    for (const nextMove of t) {
+      const nextState = applyMove(state, 'player', nextMove);
+      const [score] = minimax(nextState, depth - 1, alpha, beta, 'computer');
+      
+      if (score > maxScore) {
+        maxScore = score;
+        bestMove = nextMove;
+      }
+      
+      // Pruning
+      alpha = Math.max(alpha, score);
+      if (beta <= alpha) {
+        break;
+      }
+    }
+
+    return [maxScore, bestMove];
+  }
+
+  if (maximisingPlayerId === 'computer') {
+    let minScore = Infinity;
+
+    const t = nextMoves(state, 'computer');
+
+    for (const nextMove of t) {
+      const nextState = applyMove(state, 'computer', nextMove);
+      const [score] = minimax(nextState, depth - 1, alpha, beta, 'player');
+
+      if (score < minScore) {
+        minScore = score;
+        bestMove = nextMove;
+      }
+
+      // Pruning
+      beta = Math.min(beta, score);
+      if (beta <= alpha) {
+        break;
+      }
+    }
+
+    return [minScore, bestMove];
+  }
+
+  return [0, null];
+}
+
+</script>
